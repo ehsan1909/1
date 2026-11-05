@@ -279,9 +279,11 @@ public class MainActivity extends Activity implements RecognitionListener {
         partialSent = false;
         try {
             // اگر فهرست واژه‌های درس رسیده باشد، تشخیص فقط بین همان واژه‌ها انجام می‌شود (دقت بیشتر).
-            recognizer = (pendingGrammar != null)
-                    ? new Recognizer(model, 16000.0f, pendingGrammar)
+            String g = neighborGrammar(pendingWord);
+            recognizer = (g != null)
+                    ? new Recognizer(model, 16000.0f, g)
                     : new Recognizer(model, 16000.0f);
+            recognizer.setMaxAlternatives(ACCEPT_TOP_N);
             speechService = new SpeechService(recognizer, 16000.0f);
             listening = true;
             sendStatus("در حال گوش دادن؛ حالا واژه را تلفظ کن...");
@@ -342,9 +344,92 @@ public class MainActivity extends Activity implements RecognitionListener {
         sendError("خطا در تشخیص صدا: " + (e == null ? "نامشخص" : e.getMessage()));
     }
 
+    // خروجی‌هایی که فقط «پر‌کننده» هستند (مثل the که موتور برای نویز می‌دهد) نادیده گرفته می‌شوند.
+    private static final java.util.Set<String> FILLERS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "the", "a", "uh", "um", "huh", "oh", "hmm", "mm", "eh", "ah"));
+
+    /** 1 = خیلی سخت‌گیر (فقط بهترین حدس)، 2 = متعادل (پیشنهادی)، 3 = راحت‌تر. */
+    private static final int ACCEPT_TOP_N = 2;
+    /** تعداد واژه‌های شبیه در فهرست تشخیص: بیشتر = سخت‌گیرتر. */
+    private static final int MAX_NEIGHBORS = 30;
+
     private String extractText(String json) {
-        try { return new JSONObject(json).optString("text", "").trim(); }
-        catch (Exception e) { return ""; }
+        try {
+            JSONObject o = new JSONObject(json);
+            org.json.JSONArray alts = o.optJSONArray("alternatives");
+            if (alts == null) return cleanFiller(o.optString("text", "").trim());
+            String first = "";
+            for (int i = 0; i < alts.length() && i < ACCEPT_TOP_N; i++) {
+                String t = cleanFiller(alts.getJSONObject(i).optString("text", "").trim());
+                if (t.isEmpty()) continue;
+                if (first.isEmpty()) first = t;
+                if (matchesTarget(t)) return pendingWord;   // واژه‌ی هدف بین حدس‌های برتر است
+            }
+            return first;
+        } catch (Exception e) { return ""; }
+    }
+
+    private String cleanFiller(String t) {
+        boolean onlyFiller = true;
+        for (String p : t.toLowerCase().split("\\s+")) {
+            if (!p.isEmpty() && !FILLERS.contains(p)) onlyFiller = false;
+        }
+        return onlyFiller ? "" : t;
+    }
+
+    private boolean matchesTarget(String heard) {
+        if (pendingWord == null) return false;
+        java.util.List<String> h = java.util.Arrays.asList(
+                heard.toLowerCase().replaceAll("[^a-z' ]", " ").trim().split("\\s+"));
+        for (String part : pendingWord.split("/")) {
+            String[] w = part.toLowerCase().replaceAll("[^a-z' ]", " ").trim().split("\\s+");
+            boolean all = w.length > 0 && !w[0].isEmpty();
+            for (String t : w) if (!h.contains(t)) { all = false; break; }
+            if (all) return true;
+        }
+        return false;
+    }
+
+    private static int editDistance(String a, String b) {
+        int[] prev = new int[b.length() + 1], cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) prev[j] = j;
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] t = prev; prev = cur; cur = t;
+        }
+        return prev[b.length()];
+    }
+
+    /** گرامر محدود: واژه‌ی هدف + تا ۴۰ واژه‌ی شبیه به آن از فهرست خود مدل + [unk]. */
+    private String neighborGrammar(String word) {
+        try {
+            if (word == null || word.contains(" ") || word.contains("/")) return null;
+            final String w = word.toLowerCase().replaceAll("[^a-z']", "");
+            if (w.length() < 2) return null;
+            java.io.File f = new java.io.File(getExternalFilesDir(null), "vosk-model/graph/words.txt");
+            if (!f.exists()) return null;
+            java.util.List<String[]> found = new java.util.ArrayList<>();
+            try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    int sp = line.indexOf(' ');
+                    String c = sp > 0 ? line.substring(0, sp) : line;
+                    if (c.equals(w) || !c.matches("[a-z']{2,}") || Math.abs(c.length() - w.length()) > 2) continue;
+                    int d = editDistance(c, w);
+                    if (d <= 2) found.add(new String[]{c, String.valueOf(d)});
+                }
+            }
+            java.util.Collections.sort(found, (x, y) -> x[1].compareTo(y[1]));
+            org.json.JSONArray arr = new org.json.JSONArray();
+            arr.put(w);
+            for (int i = 0; i < found.size() && i < MAX_NEIGHBORS; i++) arr.put(found.get(i)[0]);
+            arr.put("[unk]");
+            return arr.toString();
+        } catch (Exception e) { return null; }
     }
 
     private void finishWithResult(String text) {
