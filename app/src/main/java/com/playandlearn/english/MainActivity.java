@@ -1,3 +1,4 @@
+// فایل: app/src/main/java/com/playandlearn/english/MainActivity.java
 package com.playandlearn.english;
 
 import android.Manifest;
@@ -348,10 +349,10 @@ public class MainActivity extends Activity implements RecognitionListener {
     private static final java.util.Set<String> FILLERS = new java.util.HashSet<>(java.util.Arrays.asList(
             "the", "a", "uh", "um", "huh", "oh", "hmm", "mm", "eh", "ah"));
 
-    /** 1 = خیلی سخت‌گیر (فقط بهترین حدس)، 2 = متعادل (پیشنهادی)، 3 = راحت‌تر. */
-    private static final int ACCEPT_TOP_N = 2;
+    /** 1 = خیلی سخت‌گیر (فقط بهترین حدس)، 2 = متعادل، 3 = راحت‌تر (فعلی). */
+    private static final int ACCEPT_TOP_N = 3;
     /** تعداد واژه‌های شبیه در فهرست تشخیص: بیشتر = سخت‌گیرتر. */
-    private static final int MAX_NEIGHBORS = 30;
+    private static final int MAX_NEIGHBORS = 15;
 
     private String extractText(String json) {
         try {
